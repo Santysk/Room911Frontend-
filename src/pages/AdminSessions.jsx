@@ -1,9 +1,9 @@
 // src/pages/AdminSessions.jsx
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
 import { DepartmentList } from '../types/models'
 import { exportSessionsSummaryPDF } from '../utils/pdf'
-import BackButton from '../components/BackButton' // ⬅️ NUEVO
+import BackButton from '../components/BackButton'
 
 const formatDur = (start, end) => {
   const ms = (end ?? Date.now()) - start
@@ -17,9 +17,10 @@ const DEFAULT_LIMIT = 50
 
 export default function AdminSessions() {
   const employees = useAppStore(s => s.employees)
-  const allSessions = useAppStore(s => s.employeeSessions)
+  const localSessionsCache = useAppStore(s => s.employeeSessions) // fallback local
+  const sessionsByEmployeeId = useAppStore(s => s.sessionsByEmployeeId) // async (backend)
 
-  // Filtros
+  // Filtros UI
   const [q, setQ] = useState('')
   const [dept, setDept] = useState('ALL')
   const [status, setStatus] = useState('ALL') // ALL | OPEN | CLOSED
@@ -28,32 +29,79 @@ export default function AdminSessions() {
   const [limit, setLimit] = useState(DEFAULT_LIMIT)
   const [showAll, setShowAll] = useState(false)
 
-  // Enriquecer con datos del empleado
-  const sessions = useMemo(() => {
-    const byId = new Map(employees.map(e => [e.id, e]))
-    return allSessions.map(s => {
-      const emp = byId.get(s.employeeId)
-      return {
-        ...s,
-        internalId: emp?.internalId ?? s.internalId,
-        department: emp?.department ?? '',
-      }
-    })
-  }, [allSessions, employees])
+  // Data cargada
+  const [allSessions, setAllSessions] = useState([])   // sesiones enriquecidas
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
-  // Filtrado + orden (recientes primero)
+  // Cargar desde backend: recorre empleados y concatena sus sesiones
+  const loadAll = async () => {
+    setLoading(true); setError('')
+    try {
+      const results = await Promise.allSettled(
+        (employees || []).map(e => sessionsByEmployeeId(e.id))
+      )
+      // Flatten y enriquecer con datos del empleado
+      const byId = new Map(employees.map(e => [e.id, e]))
+      const merged = results.flatMap((res, idx) => {
+        if (res.status !== 'fulfilled' || !Array.isArray(res.value)) return []
+        const emp = employees[idx]
+        return res.value.map(s => ({
+          ...s,
+          internalId: s.internalId || emp?.internalId || '',
+          department: s.department || emp?.department || '',
+        }))
+      })
+      // Ordenar por inicio desc
+      merged.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))
+      setAllSessions(merged)
+    } catch (e) {
+      console.error(e)
+      setError('No se pudieron cargar todas las sesiones. Mostrando datos locales.')
+      // Fallback: usar cache local y enriquecer
+      const byId = new Map(employees.map(e => [e.id, e]))
+      const merged = (localSessionsCache || []).map(s => {
+        const emp = byId.get(s.employeeId)
+        return {
+          ...s,
+          internalId: s.internalId || emp?.internalId || '',
+          department: s.department || emp?.department || '',
+        }
+      }).sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0))
+      setAllSessions(merged)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Cargar al montar o cuando cambian empleados
+  useEffect(() => {
+    if (!employees || employees.length === 0) {
+      setAllSessions([]); return
+    }
+    loadAll()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employees])
+
+  // Filtrado + orden (ya viene ordenado, pero mantenemos por seguridad)
   const filteredAll = useMemo(() => {
     const words = q.toLowerCase().trim()
     const fromTs = from ? new Date(from).getTime() : -Infinity
     const toTs = to ? new Date(to).getTime() + 24*60*60*1000 - 1 : Infinity
-    return sessions.filter(s => {
+
+    return allSessions.filter(s => {
       const okText = !words || `${s.internalId} ${s.employeeName}`.toLowerCase().includes(words)
       const okDept = dept === 'ALL' || s.department === dept
       const okStatus = status === 'ALL' || (status === 'OPEN' && !s.endedAt) || (status === 'CLOSED' && !!s.endedAt)
-      const okDate = s.startedAt >= fromTs && s.startedAt <= toTs
+      const start = typeof s.startedAt === 'number' ? s.startedAt : new Date(s.startedAt).getTime()
+      const okDate = start >= fromTs && start <= toTs
       return okText && okDept && okStatus && okDate
-    }).sort((a,b) => b.startedAt - a.startedAt)
-  }, [sessions, q, dept, status, from, to])
+    }).sort((a,b) => {
+      const A = typeof a.startedAt === 'number' ? a.startedAt : new Date(a.startedAt).getTime()
+      const B = typeof b.startedAt === 'number' ? b.startedAt : new Date(b.startedAt).getTime()
+      return B - A
+    })
+  }, [allSessions, q, dept, status, from, to])
 
   const filtered = useMemo(
     () => (showAll ? filteredAll : filteredAll.slice(0, limit)),
@@ -74,10 +122,12 @@ export default function AdminSessions() {
     const rows = [
       ['Internal ID','Nombre','Departamento','Inicio','Fin','Duración','Estado'],
       ...filteredAll.map(s => {
-        const start = new Date(s.startedAt).toLocaleString()
-        const end = s.endedAt ? new Date(s.endedAt).toLocaleString() : '—'
-        const dur = formatDur(s.startedAt, s.endedAt)
-        const est = s.endedAt ? 'Finalizada' : 'En curso'
+        const startMs = typeof s.startedAt === 'number' ? s.startedAt : new Date(s.startedAt).getTime()
+        const endMs = s.endedAt ? (typeof s.endedAt === 'number' ? s.endedAt : new Date(s.endedAt).getTime()) : null
+        const start = new Date(startMs).toLocaleString()
+        const end = endMs ? new Date(endMs).toLocaleString() : '—'
+        const dur = formatDur(startMs, endMs)
+        const est = endMs ? 'Finalizada' : 'En curso'
         return [s.internalId, s.employeeName, s.department || '', start, end, dur, est]
       })
     ]
@@ -98,10 +148,27 @@ export default function AdminSessions() {
 
   return (
     <div className="container" style={{ display:'grid', gap:16 }}>
-      {/* 🔙 Botón de volver al Dashboard */}
-      <BackButton to="/" /> {/* ⬅️ NUEVO */}
+      {/* 🔙 Volver */}
+      <BackButton to="/" />
 
-      <h2>Historial de conexiones (Admin)</h2>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:12 }}>
+        <h2 style={{ margin:0 }}>Historial de conexiones (Admin)</h2>
+        <div style={{ display:'flex', gap:8 }}>
+          <button className="btn" onClick={loadAll} disabled={loading}>
+            {loading ? 'Cargando…' : 'Actualizar'}
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="card"
+          style={{ borderColor:'#b91c1c', background:'#fee2e2', color:'#7f1d1d' }}
+        >
+          {error}
+        </div>
+      )}
 
       <div className="card" style={{ display:'grid', gap:12 }}>
         <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
@@ -157,9 +224,11 @@ export default function AdminSessions() {
           </thead>
           <tbody>
             {filtered.map(s => {
-              const start = new Date(s.startedAt).toLocaleString()
-              const end = s.endedAt ? new Date(s.endedAt).toLocaleString() : '—'
-              const dur = formatDur(s.startedAt, s.endedAt)
+              const startMs = typeof s.startedAt === 'number' ? s.startedAt : new Date(s.startedAt).getTime()
+              const endMs = s.endedAt ? (typeof s.endedAt === 'number' ? s.endedAt : new Date(s.endedAt).getTime()) : null
+              const start = new Date(startMs).toLocaleString()
+              const end = endMs ? new Date(endMs).toLocaleString() : '—'
+              const dur = formatDur(startMs, endMs)
               return (
                 <tr key={s.id}>
                   <td>{s.internalId}</td>
@@ -168,7 +237,7 @@ export default function AdminSessions() {
                   <td>{start}</td>
                   <td>{end}</td>
                   <td>{dur}</td>
-                  <td>{s.endedAt ? 'Finalizada' : 'En curso'}</td>
+                  <td>{endMs ? 'Finalizada' : 'En curso'}</td>
                 </tr>
               )
             })}

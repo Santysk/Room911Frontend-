@@ -9,9 +9,10 @@ export default function Login() {
   const [showPass, setShowPass] = useState(false)
   const [internalId, setInternalId] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
-  const loginAdmin = useAppStore(s => s.login)
-  const loginEmp = useAppStore(s => s.employeeLoginByInternalId)
+  const loginAdmin = useAppStore(s => s.login) // async
+  const loginEmp = useAppStore(s => s.employeeLoginByInternalId) // async
   const nav = useNavigate()
 
   // Limpia errores al cambiar de modo o editar campos
@@ -23,32 +24,43 @@ export default function Login() {
     return internalId.trim().length > 0
   }, [mode, username, password, internalId])
 
-  const onSubmit = (e) => {
+  const onSubmit = async (e) => {
     e.preventDefault()
-
-    if (mode === 'admin') {
-      const ok = loginAdmin(username.trim(), password)
-      if (ok) {
-        nav('/')
-      } else {
-        setError('Credenciales de administrador inválidas')
+    if (!isValid || loading) return
+    setLoading(true)
+    try {
+      if (mode === 'admin') {
+        const ok = await loginAdmin(username.trim(), password)
+        if (ok) {
+          nav('/')
+        } else {
+          setError('Credenciales de administrador inválidas')
+        }
+        return
       }
-      return
-    }
 
-    // --- Empleado ---
-    const id = internalId.trim()
-    if (!id) {
-      setError('Ingresa tu Internal ID')
-      return
+      // --- Empleado ---
+      const id = internalId.trim()
+      if (!id) {
+        setError('Ingresa tu Internal ID')
+        return
+      }
+      const res = await loginEmp(id)
+      if (!res?.ok) {
+        setError('No se encontró un empleado con ese Internal ID')
+        return
+      }
+      const emp = res.employee
+      // Mensaje opcional
+      // if (res.resumed) alert('Sesión retomada. Ya había una conexión iniciada.')
+      // else alert('Conexión iniciada.')
+      nav(`/employee/portal/${emp.id}`)
+    } catch (err) {
+      console.error(err)
+      setError('Ocurrió un error al iniciar sesión')
+    } finally {
+      setLoading(false)
     }
-    const res = loginEmp(id)
-    if (!res?.ok) {
-      setError('No se encontró un empleado con ese Internal ID')
-      return
-    }
-    const emp = res.employee
-    nav(`/employee/portal/${emp.id}`)
   }
 
   return (
@@ -80,7 +92,11 @@ export default function Login() {
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'center' }}>
-            <img src="/Img/Logo2.png" alt="Room 911" style={{ width: 84, height: 84, objectFit: 'contain', filter: 'drop-shadow(0 8px 16px rgba(0,0,0,.35))' }} />
+            <img
+              src="/Img/Logo2.png"
+              alt="Room 911"
+              style={{ width: 84, height: 84, objectFit: 'contain', filter: 'drop-shadow(0 8px 16px rgba(0,0,0,.35))' }}
+            />
           </div>
           <h1 style={{ margin: 0, textAlign: 'center', fontSize: 20, letterSpacing: .2 }}>ROOM_911</h1>
           <p style={{ margin: 0, opacity: .8, textAlign: 'center', fontSize: 12 }}>Acceso del administrador o empleado</p>
@@ -190,13 +206,9 @@ export default function Login() {
             </div>
           )}
 
-          <button type="submit" className="btn btn--primary" disabled={!isValid}>
-            Ingresar
+          <button type="submit" className="btn btn--primary" disabled={!isValid || loading}>
+            {loading ? 'Ingresando…' : 'Ingresar'}
           </button>
-
-          {/* Tip opcional para credenciales por defecto (puedes quitarlo si no lo quieres) */}
-          <div className="muted" style={{ fontSize: 12, textAlign: 'center' }}>
-          </div>
         </div>
       </form>
     </div>

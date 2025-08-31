@@ -1,15 +1,14 @@
 import { useMemo, useState } from 'react'
 import { useAppStore } from '../store/useAppStore'
-import { accessLogEntry } from '../types/models' // para "Permitir 1 vez"
-import BackButton from '../components/BackButton' // botón de volver
+import { accessLogEntry } from '../types/models'
+import BackButton from '../components/BackButton'
 
 function isServiceActive(emp) {
-  const startOk = !!emp?.service?.startDate
   const now = new Date()
   const start = emp?.service?.startDate ? new Date(emp.service.startDate) : null
   const end = emp?.service?.endDate ? new Date(emp.service.endDate) : null
-  if (!startOk) return false
-  if (start && start > now) return false
+  if (!start) return false
+  if (start > now) return false
   if (end && now > end) return false
   return true
 }
@@ -29,7 +28,6 @@ export default function AccessSimulator() {
   const employees = useAppStore(s => s.employees)
   const accessLogs = useAppStore(s => s.accessLogs)
 
-  // Si no tienes simulateAccessForEmployee en el store, dejamos fallback abajo.
   const simulateAccess = useAppStore(s => s.simulateAccessForEmployee)
   const recordAccessAttempt = useAppStore(s => s.recordAccessAttempt)
   const updateEmployee = useAppStore(s => s.updateEmployee)
@@ -39,7 +37,7 @@ export default function AccessSimulator() {
   const adminEndSessionForEmployee   = useAppStore(s => s.adminEndSessionForEmployee)
 
   const [employeeId, setEmployeeId] = useState('')
-  const [verified, setVerified] = useState(null) // { ok, reasons:[] }
+  const [verified, setVerified] = useState(null)
 
   const selected = useMemo(
     () => employees.find(e => e.id === employeeId) || null,
@@ -50,6 +48,7 @@ export default function AccessSimulator() {
     () => accessLogs.filter(l => l.employeeId === employeeId).slice(0, 10),
     [accessLogs, employeeId]
   )
+
   const lastSessions = useMemo(
     () => sessionsByEmployeeId(employeeId).slice(0, 10),
     [sessionsByEmployeeId, employeeId]
@@ -61,8 +60,7 @@ export default function AccessSimulator() {
     const miss = missingFields(selected)
     if (miss.length) reasons.push(`Faltan campos: ${miss.join(', ')}`)
     if (!isServiceActive(selected)) reasons.push('Servicio inactivo (revisa fechas)')
-    const ok = reasons.length === 0
-    setVerified({ ok, reasons })
+    setVerified({ ok: reasons.length === 0, reasons })
   }
 
   const onToggleAccess = (enable) => {
@@ -80,18 +78,11 @@ export default function AccessSimulator() {
 
   const onSimulateAccess = () => {
     if (!selected) return alert('Selecciona un empleado')
-    if (typeof simulateAccess === 'function') {
-      const res = simulateAccess(selected.id)
-      if (!res?.ok) return alert('No se pudo simular el acceso.')
-      const label = res.status === 'GRANTED' ? 'Permitido' :
-                    res.status === 'DENIED' ? 'Denegado' : 'No registrado'
-      alert(`Acceso ${label}`)
-    } else {
-      // Fallback: decide por hasRoomAccess y registra log
-      const status = selected.hasRoomAccess ? 'GRANTED' : 'DENIED'
-      recordAccessAttempt(accessLogEntry(status, selected.internalId, selected))
-      alert(`Acceso ${status === 'GRANTED' ? 'Permitido' : 'Denegado'}`)
-    }
+    const res = simulateAccess?.(selected.id)
+    if (!res?.ok) return alert('No se pudo simular el acceso.')
+    const label = res.status === 'GRANTED' ? 'Permitido' :
+                  res.status === 'DENIED' ? 'Denegado' : 'No registrado'
+    alert(`Acceso ${label}`)
   }
 
   const onStart = () => {
@@ -110,15 +101,19 @@ export default function AccessSimulator() {
   }
 
   return (
-    <div className="container" style={{ display:'grid', gap:16 }}>
-      {/* 🔙 Botón de volver al dashboard */}
+    <div className="container" style={{ display: 'grid', gap: 16 }}>
+      {/* 🔙 Botón para volver al Dashboard */}
       <BackButton to="/" />
 
       <h2>Simulador</h2>
 
-      <div className="card" style={{ display:'grid', gap:12 }}>
-        <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
-          <select className="select" value={employeeId} onChange={e => { setEmployeeId(e.target.value); setVerified(null) }}>
+      <div className="card" style={{ display: 'grid', gap: 12 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <select
+            className="select"
+            value={employeeId}
+            onChange={e => { setEmployeeId(e.target.value); setVerified(null) }}
+          >
             <option value="">— Selecciona un empleado —</option>
             {employees.map(e => (
               <option key={e.id} value={e.id}>
@@ -128,12 +123,12 @@ export default function AccessSimulator() {
           </select>
 
           {selected && (
-            <span style={{ padding:'6px 10px', border:'1px solid #ddd', borderRadius:8 }}>
+            <span style={{ padding: '6px 10px', border: '1px solid #ddd', borderRadius: 8 }}>
               Acceso a ROOM_911: <strong>{selected.hasRoomAccess ? 'Permitido' : 'Denegado'}</strong>
             </span>
           )}
 
-          <div style={{ marginLeft:'auto', display:'flex', gap:8, flexWrap:'wrap' }}>
+          <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button className="btn" onClick={doVerify}>Verificar empleado</button>
             <button className="btn" onClick={onSimulateAccess} disabled={!selected}>Simular Acceso</button>
             <button className="btn" onClick={onStart} disabled={!selected}>Iniciar Sesión</button>
@@ -143,9 +138,9 @@ export default function AccessSimulator() {
 
         {/* Panel de verificación */}
         {selected && (
-          <div className="card" style={{ background:'#fafafa', display:'grid', gap:8 }}>
-            <h3 style={{ margin:0 }}>Estado del empleado</h3>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8 }}>
+          <div className="card" style={{ background: '#fafafa', display: 'grid', gap: 8 }}>
+            <h3 style={{ margin: 0 }}>Estado del empleado</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
               <div>
                 <div><strong>Nombre:</strong> {selected.firstName} {selected.lastName}</div>
                 <div><strong>Documento:</strong> {selected.documentId || '—'}</div>
@@ -164,13 +159,13 @@ export default function AccessSimulator() {
             </div>
 
             {verified && (
-              <div style={{ marginTop:6 }}>
+              <div style={{ marginTop: 6 }}>
                 {verified.ok ? (
-                  <div style={{ color:'#1a7f37' }}>✅ Verificación exitosa. Servicio activo y datos mínimos completos.</div>
+                  <div style={{ color: '#1a7f37' }}>✅ Verificación exitosa. Servicio activo y datos mínimos completos.</div>
                 ) : (
                   <>
-                    <div style={{ color:'#b91c1c' }}>❌ No elegible:</div>
-                    <ul style={{ margin:'6px 0 0 16px' }}>
+                    <div style={{ color: '#b91c1c' }}>❌ No elegible:</div>
+                    <ul style={{ margin: '6px 0 0 16px' }}>
                       {verified.reasons.map((r, i) => <li key={i}>{r}</li>)}
                     </ul>
                   </>
@@ -178,12 +173,11 @@ export default function AccessSimulator() {
               </div>
             )}
 
-            <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginTop:4 }}>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
               <button
                 className="btn"
                 onClick={() => onToggleAccess(true)}
                 disabled={!selected || (verified && !verified.ok)}
-                title={verified && !verified.ok ? 'Primero corrige la verificación' : 'Habilitar acceso permanente'}
               >
                 Habilitar acceso
               </button>
@@ -191,7 +185,6 @@ export default function AccessSimulator() {
                 className="btn"
                 onClick={() => onToggleAccess(false)}
                 disabled={!selected}
-                title="Revocar acceso permanente"
               >
                 Revocar acceso
               </button>
@@ -199,7 +192,6 @@ export default function AccessSimulator() {
                 className="btn"
                 onClick={onAllowOnce}
                 disabled={!selected}
-                title="Permitir un ingreso SOLO por esta vez"
               >
                 Permitir 1 vez
               </button>
@@ -208,9 +200,10 @@ export default function AccessSimulator() {
         )}
       </div>
 
-      <div className="grid" style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:16 }}>
+      {/* Tablas de historial */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <div className="card">
-          <h3 style={{ marginTop:0 }}>Últimos accesos simulados</h3>
+          <h3 style={{ marginTop: 0 }}>Últimos accesos simulados</h3>
           <table className="table">
             <thead><tr><th>Fecha/Hora</th><th>Resultado</th></tr></thead>
             <tbody>
@@ -220,13 +213,13 @@ export default function AccessSimulator() {
                   <td>{l.status === 'GRANTED' ? 'Permitido' : l.status === 'DENIED' ? 'Denegado' : 'No registrado'}</td>
                 </tr>
               ))}
-              {lastLogs.length === 0 && <tr><td colSpan="2" style={{ opacity:.7 }}>Sin registros.</td></tr>}
+              {lastLogs.length === 0 && <tr><td colSpan="2" style={{ opacity: .7 }}>Sin registros.</td></tr>}
             </tbody>
           </table>
         </div>
 
         <div className="card">
-          <h3 style={{ marginTop:0 }}>Últimas sesiones simuladas</h3>
+          <h3 style={{ marginTop: 0 }}>Últimas sesiones simuladas</h3>
           <table className="table">
             <thead><tr><th>Inicio</th><th>Fin</th><th>Duración</th><th>Estado</th></tr></thead>
             <tbody>
@@ -239,12 +232,12 @@ export default function AccessSimulator() {
                   <tr key={s.id}>
                     <td>{start}</td>
                     <td>{end}</td>
-                    <td>{mins} min</td> {/* 👈 FIX: sin llave extra */}
+                    <td>{mins} min</td>
                     <td>{s.endedAt ? 'Finalizada' : 'En curso'}</td>
                   </tr>
                 )
               })}
-              {lastSessions.length === 0 && <tr><td colSpan="4" style={{ opacity:.7 }}>Sin registros.</td></tr>}
+              {lastSessions.length === 0 && <tr><td colSpan="4" style={{ opacity: .7 }}>Sin registros.</td></tr>}
             </tbody>
           </table>
         </div>
